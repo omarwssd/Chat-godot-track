@@ -1,56 +1,74 @@
+
 const WebSocket = require("ws");
 
 const PORT = process.env.PORT || 10000;
+const OWNER_PLAYER_ID = String(
+    process.env.OWNER_PLAYER_ID || ""
+).trim();
 
-const wss = new WebSocket.Server({
-    port: PORT
-});
+const wss = new WebSocket.Server({ port: PORT });
+const players = new Map();
 
 console.log(`Chat server running on port ${PORT}`);
 
-const players = new Map();
+if (!OWNER_PLAYER_ID) {
+    console.warn("WARNING: OWNER_PLAYER_ID is not configured!");
+}
 
 wss.on("connection", (socket) => {
-
     console.log("Player connected");
 
     socket.on("message", (data) => {
-
         try {
-
             const packet = JSON.parse(data.toString());
 
-            // Player joining
             if (packet.type === "join") {
+                const playerId = String(
+                    packet.player_id || ""
+                ).trim();
+
+                const displayName = String(
+                    packet.display_name || "Player"
+                ).trim().slice(0, 40);
+
+                if (!playerId) {
+                    socket.close(1008, "Player ID required");
+                    return;
+                }
+
+                const isOwner =
+                    OWNER_PLAYER_ID !== "" &&
+                    playerId === OWNER_PLAYER_ID;
 
                 players.set(socket, {
-                    player_id: String(packet.player_id || ""),
-                    display_name: String(packet.display_name || "Player")
+                    player_id: playerId,
+                    display_name: displayName || "Player",
+                    is_owner: isOwner
                 });
 
                 console.log(
-                    `${packet.display_name} joined the chat`
+                    `${displayName} joined the chat` +
+                    (isOwner ? " [OWNER]" : "")
                 );
 
                 return;
             }
 
-            // Chat message
             if (packet.type === "chat") {
-
                 const player = players.get(socket);
 
                 if (!player) {
                     return;
                 }
 
-                const message = String(packet.message || "").trim();
+                const message = String(
+                    packet.message || ""
+                ).trim();
 
-                if (message.length === 0) {
-                    return;
-                }
-
-                if (message.length > 200) {
+                if (
+                    message.length === 0 ||
+                    message.length > 200
+                ) {
                     return;
                 }
 
@@ -58,48 +76,38 @@ wss.on("connection", (socket) => {
                     type: "chat",
                     player_id: player.player_id,
                     display_name: player.display_name,
+                    is_owner: player.is_owner,
                     message: message
                 };
 
-                // Broadcast to everyone
                 for (const client of wss.clients) {
-
                     if (client.readyState === WebSocket.OPEN) {
                         client.send(JSON.stringify(response));
                     }
-
                 }
-
             }
-
         } catch (error) {
-
             console.log("Invalid packet:", error);
-
         }
-
     });
 
     socket.on("close", () => {
-
         const player = players.get(socket);
 
         if (player) {
-            console.log(`${player.display_name} disconnected`);
+            console.log(
+                `${player.display_name} disconnected`
+            );
         }
 
         players.delete(socket);
-
     });
-
 });
 
 process.on("SIGTERM", () => {
-
     console.log("Server shutting down");
 
     wss.close(() => {
         process.exit(0);
     });
-
 });
